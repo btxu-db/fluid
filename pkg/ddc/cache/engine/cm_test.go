@@ -279,21 +279,32 @@ func TestGenerateRuntimeConfigDataWithMissingComponentTopology(t *testing.T) {
 		})
 	}
 }
-func TestGenerateRuntimeConfigDataWithNilTopology(t *testing.T) {
-	scheme := newCacheEngineTestScheme(t)
-	runtimeObj := newCacheRuntimeForConfigMapTest()
-	runtimeClass := newCacheRuntimeClassForConfigMapTest()
-	runtimeClass.Topology = nil
-	dataset := newDatasetForConfigMapTest()
-	baseClient := fake.NewFakeClientWithScheme(scheme, runtimeObj, runtimeClass, dataset)
-	engine := &CacheEngine{Client: baseClient, name: "demo", namespace: "default"}
-
-	_, err := engine.generateRuntimeConfigData(context.Background(), runtimeObj)
-	if err == nil {
-		t.Fatal("expected error when topology is nil, got nil")
+func TestGenerateRuntimeConfigDataWithoutAnyComponent(t *testing.T) {
+	testCases := map[string]struct {
+		topology *datav1alpha1.RuntimeTopology
+	}{
+		"topology is nil":                {topology: nil},
+		"topology declares no component": {topology: &datav1alpha1.RuntimeTopology{}},
 	}
-	if !strings.Contains(err.Error(), "at least one component should be defined") {
-		t.Fatalf("unexpected error message: %v", err)
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			scheme := newCacheEngineTestScheme(t)
+			runtimeObj := newCacheRuntimeForConfigMapTest()
+			runtimeClass := newCacheRuntimeClassForConfigMapTest()
+			runtimeClass.Topology = tc.topology
+			dataset := newDatasetForConfigMapTest()
+			baseClient := fake.NewFakeClientWithScheme(scheme, runtimeObj, runtimeClass, dataset)
+			engine := &CacheEngine{Client: baseClient, name: "demo", namespace: "default"}
+
+			_, err := engine.generateRuntimeConfigData(context.Background(), runtimeObj)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), "at least one component should be defined") {
+				t.Fatalf("unexpected error message: %v", err)
+			}
+		})
 	}
 }
 func TestGenerateDataLoadValueFileWithNilTopology(t *testing.T) {
