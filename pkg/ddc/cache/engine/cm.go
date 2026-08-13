@@ -19,7 +19,6 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	datav1alpha1 "github.com/fluid-cloudnative/fluid/api/v1alpha1"
 	"github.com/fluid-cloudnative/fluid/pkg/common"
@@ -108,10 +107,6 @@ func (e *CacheEngine) generateRuntimeConfigData(ctx context.Context, runtime *da
 	runtimeClass, err := e.getRuntimeClass(runtime.Spec.RuntimeClassName)
 	if err != nil {
 		return nil, err
-	}
-	if runtimeClass.Topology == nil ||
-		(runtimeClass.Topology.Master == nil && runtimeClass.Topology.Worker == nil && runtimeClass.Topology.Client == nil) {
-		return nil, fmt.Errorf("at least one component should be defined in runtimeClass")
 	}
 	var mounts []common.MountConfig
 	for _, m := range dataset.Spec.Mounts {

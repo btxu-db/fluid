@@ -234,24 +234,51 @@ func newDatasetForConfigMapTest() *datav1alpha1.Dataset {
 		Status: datav1alpha1.DatasetStatus{Runtimes: []datav1alpha1.Runtime{{Name: "demo", Type: common.CacheRuntime}}},
 	}
 }
-func TestGenerateRuntimeConfigDataWithMissingClientTopology(t *testing.T) {
-	scheme := newCacheEngineTestScheme(t)
-	runtimeObj := newCacheRuntimeForConfigMapTest()
-	runtimeObj.Spec.Client.Disabled = false
-	runtimeClass := newCacheRuntimeClassForConfigMapTest()
-	runtimeClass.Topology = &datav1alpha1.RuntimeTopology{
-		Master: &datav1alpha1.RuntimeComponentDefinition{},
-		Worker: &datav1alpha1.RuntimeComponentDefinition{},
+func TestGenerateRuntimeConfigDataWithMissingComponentTopology(t *testing.T) {
+	testCases := map[string]struct {
+		topology *datav1alpha1.RuntimeTopology
+		enable   func(runtime *datav1alpha1.CacheRuntime)
+	}{
+		"master topology undefined": {
+			topology: &datav1alpha1.RuntimeTopology{
+				Worker: &datav1alpha1.RuntimeComponentDefinition{},
+				Client: &datav1alpha1.RuntimeComponentDefinition{},
+			},
+			enable: func(r *datav1alpha1.CacheRuntime) { r.Spec.Master.Disabled = false },
+		},
+		"worker topology undefined": {
+			topology: &datav1alpha1.RuntimeTopology{
+				Master: &datav1alpha1.RuntimeComponentDefinition{},
+				Client: &datav1alpha1.RuntimeComponentDefinition{},
+			},
+			enable: func(r *datav1alpha1.CacheRuntime) { r.Spec.Worker.Disabled = false },
+		},
+		"client topology undefined": {
+			topology: &datav1alpha1.RuntimeTopology{
+				Master: &datav1alpha1.RuntimeComponentDefinition{},
+				Worker: &datav1alpha1.RuntimeComponentDefinition{},
+			},
+			enable: func(r *datav1alpha1.CacheRuntime) { r.Spec.Client.Disabled = false },
+		},
 	}
-	dataset := newDatasetForConfigMapTest()
-	baseClient := fake.NewFakeClientWithScheme(scheme, runtimeObj, runtimeClass, dataset)
-	engine := &CacheEngine{Client: baseClient, name: "demo", namespace: "default"}
 
-	if _, err := engine.generateRuntimeConfigData(context.Background(), runtimeObj); err != nil {
-		t.Fatalf("expected no error when client topology is undefined, got %v", err)
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			scheme := newCacheEngineTestScheme(t)
+			runtimeObj := newCacheRuntimeForConfigMapTest()
+			tc.enable(runtimeObj)
+			runtimeClass := newCacheRuntimeClassForConfigMapTest()
+			runtimeClass.Topology = tc.topology
+			dataset := newDatasetForConfigMapTest()
+			baseClient := fake.NewFakeClientWithScheme(scheme, runtimeObj, runtimeClass, dataset)
+			engine := &CacheEngine{Client: baseClient, name: "demo", namespace: "default"}
+
+			if _, err := engine.generateRuntimeConfigData(context.Background(), runtimeObj); err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+		})
 	}
 }
-
 func TestGenerateRuntimeConfigDataWithNilTopology(t *testing.T) {
 	scheme := newCacheEngineTestScheme(t)
 	runtimeObj := newCacheRuntimeForConfigMapTest()
@@ -267,5 +294,32 @@ func TestGenerateRuntimeConfigDataWithNilTopology(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "at least one component should be defined") {
 		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+func TestGenerateDataLoadValueFileWithNilTopology(t *testing.T) {
+	scheme := newCacheEngineTestScheme(t)
+	runtimeObj := newCacheRuntimeForConfigMapTest()
+	runtimeClass := &datav1alpha1.CacheRuntimeClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-class"},
+		Topology:   nil,
+		DataOperationSpecs: []datav1alpha1.DataOperationSpec{
+			{Name: "DataLoad", Command: []string{"/usr/local/bin/dataload"}},
+		},
+	}
+	dataset := newDatasetForConfigMapTest()
+	dataload := &datav1alpha1.DataLoad{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-dataload", Namespace: "default"},
+		Spec: datav1alpha1.DataLoadSpec{
+			Dataset: datav1alpha1.TargetDataset{Name: "demo", Namespace: "default"},
+		},
+	}
+
+	fakeClient := fake.NewFakeClientWithScheme(scheme, runtimeObj, runtimeClass, dataset, dataload)
+	engine := &CacheEngine{Client: fakeClient, name: "demo", namespace: "default"}
+	ctx := cruntime.ReconcileRequestContext{Client: fakeClient}
+
+	_, err := engine.generateDataLoadValueFile(ctx, dataload)
+	if err == nil {
+		t.Fatal("expected error when topology is nil, got nil")
 	}
 }
