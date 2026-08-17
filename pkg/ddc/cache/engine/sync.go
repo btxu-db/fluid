@@ -195,9 +195,9 @@ func (e *CacheEngine) syncRuntimeSpec(ctx cruntime.ReconcileRequestContext, runt
 		manager := component.NewComponentHelper(common.ComponentTypeMaster, e.Client)
 		// Only sync resources if they are explicitly set (not zero-value)
 		// This prevents overwriting template defaults when user hasn't specified resources
-		var resources corev1.ResourceRequirements
+		var resources *corev1.ResourceRequirements
 		if runtime.Spec.Master.Resources.Requests != nil || runtime.Spec.Master.Resources.Limits != nil {
-			resources = runtime.Spec.Master.Resources
+			resources = &runtime.Spec.Master.Resources
 		}
 		masterSpec := component.ComponentSpec{
 			Version:   runtime.Spec.Master.RuntimeVersion,
@@ -219,9 +219,9 @@ func (e *CacheEngine) syncRuntimeSpec(ctx cruntime.ReconcileRequestContext, runt
 		manager := component.NewComponentHelper(common.ComponentTypeWorker, e.Client)
 		// Only sync resources if they are explicitly set (not zero-value)
 		// This prevents overwriting template defaults when user hasn't specified resources
-		var workerResources corev1.ResourceRequirements
+		var workerResources *corev1.ResourceRequirements
 		if runtime.Spec.Worker.Resources.Requests != nil || runtime.Spec.Worker.Resources.Limits != nil {
-			workerResources = runtime.Spec.Worker.Resources
+			workerResources = &runtime.Spec.Worker.Resources
 		}
 		workerSpec := component.ComponentSpec{
 			Version:   runtime.Spec.Worker.RuntimeVersion,
