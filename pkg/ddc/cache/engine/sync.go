@@ -211,9 +211,18 @@ func (e *CacheEngine) syncRuntimeSpec(ctx cruntime.ReconcileRequestContext, runt
 			Namespace: e.namespace,
 		}
 		manager := component.NewComponentHelper(common.ComponentTypeWorker, e.Client)
+		// Mirror the creation path: the tiered store memory quota is charged on top
+		// of the resolved baseline, whether that came from the CacheRuntime or from
+		// the CacheRuntimeClass template. See TransformRuntimeTieredStore.
+		workerResources := desiredComponentResources(runtime.Spec.Worker.Resources, runtimeClass.Topology.Worker)
+		if workerResources != nil {
+			resources := withTieredStoreMemoryQuota(*workerResources,
+				tieredStoreMemoryQuota(&runtime.Spec.Worker.TieredStore))
+			workerResources = &resources
+		}
 		workerSpec := component.ComponentSpec{
 			Version:   runtime.Spec.Worker.RuntimeVersion,
-			Resources: desiredComponentResources(runtime.Spec.Worker.Resources, runtimeClass.Topology.Worker),
+			Resources: workerResources,
 			Replicas:  &runtime.Spec.Worker.Replicas,
 		}
 		if err := manager.SyncComponentSpec(ctx.Context, workerIdentity, workerSpec); err != nil {

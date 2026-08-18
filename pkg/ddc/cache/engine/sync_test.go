@@ -984,5 +984,57 @@ var _ = Describe("CacheEngine Sync Tests", Label("pkg.ddc.cache.engine.sync_test
 				Expect(memLimitOf(workerSts)).To(Equal("8Gi"))
 			})
 		})
+
+		Context("when the CacheRuntime declares a memory tiered store", func() {
+			// The creation path derives the worker's memory as
+			// <user baseline> + <tiered store memory quota>. A later sync recomputes
+			// the desired state from the same spec and must land on the same value,
+			// otherwise the quota silently disappears on the second reconcile.
+			BeforeEach(func() {
+				runtimeObj.Spec.Worker.Resources = corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")},
+				}
+				runtimeObj.Spec.Worker.TieredStore = datav1alpha1.RuntimeTieredStore{
+					Levels: []datav1alpha1.RuntimeTieredStoreLevel{
+						{ProcessMemory: &datav1alpha1.ProcessMemoryMediumSource{Quota: resource.MustParse("8Gi")}},
+					},
+				}
+				Expect(fakeClient.Update(ctx.Context, runtimeObj)).To(Succeed())
+			})
+
+			It("should keep the tiered store quota when syncing after creation", func() {
+				// Creation reconcile: derive the desired state and create the workload.
+				createRuntime, err := engine.getRuntime()
+				Expect(err).NotTo(HaveOccurred())
+
+				// Read the baseline before transforming: the transform must not be
+				// trusted to leave the runtime spec alone.
+				baseline := createRuntime.Spec.Worker.Resources.Limits[corev1.ResourceMemory].DeepCopy()
+
+				value, err := engine.transform(dataset, createRuntime, runtimeClass)
+				Expect(err).NotTo(HaveOccurred())
+				desired := value.Worker.PodTemplateSpec.Spec.Containers[0].Resources.Limits[corev1.ResourceMemory]
+
+				// Guard against a vacuous comparison: creation must actually charge the quota.
+				Expect(desired.Cmp(baseline)).To(Equal(1), "creation path must charge the tiered store quota")
+
+				key := types.NamespacedName{Name: workerSts, Namespace: "default"}
+				seeded := &workloadv1alpha1.AdvancedStatefulSet{}
+				Expect(fakeClient.Get(ctx.Context, key, seeded)).To(Succeed())
+				Expect(fakeClient.Delete(ctx.Context, seeded)).To(Succeed())
+
+				_, err = engine.SetupWorkerComponent(value.Worker)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(memLimitOf(workerSts)).To(Equal(desired.String()))
+
+				// Sync reconcile: re-read the runtime the way a fresh reconcile would,
+				// so the sync can only rely on what is persisted in the spec.
+				syncRuntime, err := engine.getRuntime()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(engine.syncRuntimeSpec(ctx, syncRuntime, runtimeClass)).To(Succeed())
+
+				Expect(memLimitOf(workerSts)).To(Equal(desired.String()))
+			})
+		})
 	})
 })

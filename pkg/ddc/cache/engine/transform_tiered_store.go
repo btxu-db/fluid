@@ -22,6 +22,7 @@ import (
 	datav1alpha1 "github.com/fluid-cloudnative/fluid/api/v1alpha1"
 	"github.com/fluid-cloudnative/fluid/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // TransformRuntimeTieredStore transforms the tiered store configuration to worker pod spec
@@ -101,18 +102,7 @@ func (e *CacheEngine) handleProcessMemory(podSpec *corev1.PodSpec, container *co
 	totalQuota := memoryMediumSource.Quota.DeepCopy()
 
 	// add totalQuota to memory resources only when memory is restricted.
-	if container.Resources.Requests != nil {
-		if currentRequest, exists := container.Resources.Requests[corev1.ResourceMemory]; exists && !currentRequest.IsZero() {
-			currentRequest.Add(totalQuota)
-			container.Resources.Requests[corev1.ResourceMemory] = currentRequest
-		}
-	}
-	if container.Resources.Limits != nil {
-		if currentLimit, exists := container.Resources.Limits[corev1.ResourceMemory]; exists && !currentLimit.IsZero() {
-			currentLimit.Add(totalQuota)
-			container.Resources.Limits[corev1.ResourceMemory] = currentLimit
-		}
-	}
+	container.Resources = withTieredStoreMemoryQuota(container.Resources, totalQuota)
 
 	// add an memory emptyDir for /dev/shm in the container
 	volumeName := fmt.Sprintf("tiered-store-level-%d-memory", levelIndex)
@@ -211,21 +201,44 @@ func (e *CacheEngine) handleEmptyDir(podSpec *corev1.PodSpec, container *corev1.
 	// For Memory-backed EmptyDir (tmpfs), add quota to container memory resources
 	// This ensures proper resource accounting and prevents excessive memory usage
 	if emptyDirMediumSource.Medium == corev1.StorageMediumMemory {
-		// Only add to resources if the container already has memory constraints
-		// If no memory resources are set, the container is unconstrained and we don't need to add
-		if container.Resources.Requests != nil {
-			if currentRequest, exists := container.Resources.Requests[corev1.ResourceMemory]; exists && !currentRequest.IsZero() {
-				currentRequest.Add(quota)
-				container.Resources.Requests[corev1.ResourceMemory] = currentRequest
-			}
-		}
-		if container.Resources.Limits != nil {
-			if currentLimit, exists := container.Resources.Limits[corev1.ResourceMemory]; exists && !currentLimit.IsZero() {
-				currentLimit.Add(quota)
-				container.Resources.Limits[corev1.ResourceMemory] = currentLimit
-			}
-		}
+		container.Resources = withTieredStoreMemoryQuota(container.Resources, quota)
 	}
 
 	return nil
+}
+
+// tieredStoreMemoryQuota sums the memory quota of all memory-backed tiered store
+// levels. It must cover exactly the levels that TransformRuntimeTieredStore
+// charges to container memory: process memory and Memory-medium emptyDir.
+func tieredStoreMemoryQuota(tieredStore *datav1alpha1.RuntimeTieredStore) resource.Quantity {
+	total := *resource.NewQuantity(0, resource.BinarySI)
+	for _, level := range tieredStore.Levels {
+		if level.ProcessMemory != nil {
+			total.Add(level.ProcessMemory.Quota)
+		}
+		if level.EmptyDir != nil && level.EmptyDir.Medium == corev1.StorageMediumMemory {
+			total.Add(level.EmptyDir.Quota)
+		}
+	}
+	return total
+}
+
+// withTieredStoreMemoryQuota returns base with quota added to its memory request
+// and limit. Absent or zero constraints are left untouched, so a container
+// without memory constraints stays unconstrained.
+func withTieredStoreMemoryQuota(base corev1.ResourceRequirements, quota resource.Quantity) corev1.ResourceRequirements {
+	result := *base.DeepCopy()
+	if quota.IsZero() {
+		return result
+	}
+	for _, list := range []corev1.ResourceList{result.Requests, result.Limits} {
+		if list == nil {
+			continue
+		}
+		if cur, exists := list[corev1.ResourceMemory]; exists && !cur.IsZero() {
+			cur.Add(quota)
+			list[corev1.ResourceMemory] = cur
+		}
+	}
+	return result
 }
