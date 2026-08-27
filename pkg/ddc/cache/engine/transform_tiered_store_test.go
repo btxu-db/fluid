@@ -434,4 +434,101 @@ var _ = Describe("CacheEngine TransformRuntimeTieredStore Tests", Label("pkg.ddc
 			})
 		})
 	})
+
+	// chargedTieredStoreMemoryQuota recovers from a workload the quota that
+	// TransformRuntimeTieredStore charged to container memory. It must select exactly
+	// the volumes that carry that quota, because the sync path adds whatever it returns
+	// on top of the user's baseline.
+	Describe("chargedTieredStoreMemoryQuota", func() {
+		memoryVolume := func(name, size string) corev1.Volume {
+			quota := resource.MustParse(size)
+			return corev1.Volume{
+				Name: name,
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{
+						Medium:    corev1.StorageMediumMemory,
+						SizeLimit: &quota,
+					},
+				},
+			}
+		}
+
+		It("should return zero for a pod spec without volumes", func() {
+			empty := chargedTieredStoreMemoryQuota(&corev1.PodSpec{})
+			Expect(empty.IsZero()).To(BeTrue())
+		})
+
+		It("should sum the memory-backed tiered store volumes", func() {
+			podSpec := &corev1.PodSpec{Volumes: []corev1.Volume{
+				memoryVolume("tiered-store-level-0-memory", "8Gi"),
+				memoryVolume("tiered-store-level-1-index-0", "2Gi"),
+			}}
+
+			quota := chargedTieredStoreMemoryQuota(podSpec)
+			Expect(quota.String()).To(Equal("10Gi"))
+		})
+
+		It("should round-trip the quota that the transform charged", func() {
+			podSpec := &corev1.PodSpec{Containers: []corev1.Container{{
+				Name: "worker",
+				Resources: corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")},
+				},
+			}}}
+			tieredStore := &datav1alpha1.RuntimeTieredStore{
+				Levels: []datav1alpha1.RuntimeTieredStoreLevel{
+					{ProcessMemory: &datav1alpha1.ProcessMemoryMediumSource{Quota: resource.MustParse("8Gi")}},
+				},
+			}
+
+			Expect(engine.TransformRuntimeTieredStore(tieredStore, podSpec)).To(Succeed())
+
+			// The container was charged 4Gi + 8Gi, and the quota is recoverable from the volume.
+			limit := podSpec.Containers[0].Resources.Limits[corev1.ResourceMemory]
+			Expect(limit.String()).To(Equal("12Gi"))
+			recovered := chargedTieredStoreMemoryQuota(podSpec)
+			Expect(recovered.String()).To(Equal("8Gi"))
+		})
+
+		It("should ignore volumes the transform never charges to memory", func() {
+			hostPathQuota := resource.MustParse("100Gi")
+			diskQuota := resource.MustParse("50Gi")
+			podSpec := &corev1.PodSpec{Volumes: []corev1.Volume{
+				memoryVolume("tiered-store-level-0-memory", "8Gi"),
+				// hostPath levels are not charged to container memory
+				{
+					Name:         "tiered-store-level-1-index-0",
+					VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/mnt/disk"}},
+				},
+				// a disk-backed emptyDir level is not charged either
+				{
+					Name: "tiered-store-level-2-index-0",
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &diskQuota},
+					},
+				},
+				// a memory volume with no size limit contributes nothing
+				{
+					Name: "tiered-store-level-3-memory",
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
+					},
+				},
+				// a tmpfs the CacheRuntimeClass template declares itself is not a tiered
+				// store level, and charging it would inflate the container on every sync
+				{
+					Name: "user-defined-shm",
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{
+							Medium:    corev1.StorageMediumMemory,
+							SizeLimit: &hostPathQuota,
+						},
+					},
+				},
+			}}
+
+			quota := chargedTieredStoreMemoryQuota(podSpec)
+			Expect(quota.String()).To(Equal("8Gi"))
+		})
+	})
 })

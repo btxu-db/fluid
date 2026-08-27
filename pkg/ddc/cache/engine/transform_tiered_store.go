@@ -18,12 +18,17 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 
 	datav1alpha1 "github.com/fluid-cloudnative/fluid/api/v1alpha1"
 	"github.com/fluid-cloudnative/fluid/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
+
+// tieredStoreVolumeNamePrefix prefixes every volume TransformRuntimeTieredStore
+// generates, so the quota charged to a workload can later be recovered from it.
+const tieredStoreVolumeNamePrefix = "tiered-store-level-"
 
 // TransformRuntimeTieredStore transforms the tiered store configuration to worker pod spec
 func (e *CacheEngine) TransformRuntimeTieredStore(tieredStore *datav1alpha1.RuntimeTieredStore, podSpec *corev1.PodSpec) error {
@@ -105,7 +110,7 @@ func (e *CacheEngine) handleProcessMemory(podSpec *corev1.PodSpec, container *co
 	container.Resources = withTieredStoreMemoryQuota(container.Resources, totalQuota)
 
 	// add an memory emptyDir for /dev/shm in the container
-	volumeName := fmt.Sprintf("tiered-store-level-%d-memory", levelIndex)
+	volumeName := fmt.Sprintf("%s%d-memory", tieredStoreVolumeNamePrefix, levelIndex)
 	mountPath := GetMemoryTieredStoreMountPath(levelIndex)
 	volume := corev1.Volume{
 		Name: volumeName,
@@ -140,7 +145,7 @@ func (e *CacheEngine) handleHostPath(podSpec *corev1.PodSpec, container *corev1.
 
 	// Process each path and corresponding quota
 	for i, hostPath := range hostPathMediumSource.Paths {
-		volumeName := fmt.Sprintf("tiered-store-level-%d-index-%d", levelIndex, i)
+		volumeName := fmt.Sprintf("%s%d-index-%d", tieredStoreVolumeNamePrefix, levelIndex, i)
 		mountPath := GetHostPathTieredStoreMountPath(levelIndex, i)
 
 		volume := corev1.Volume{
@@ -174,7 +179,7 @@ func (e *CacheEngine) handleEmptyDir(podSpec *corev1.PodSpec, container *corev1.
 		return fmt.Errorf("emptyDir quota cannot be zero for empty dir medium source at level index %d", levelIndex)
 	}
 
-	volumeName := fmt.Sprintf("tiered-store-level-%d-index-%d", levelIndex, 0)
+	volumeName := fmt.Sprintf("%s%d-index-%d", tieredStoreVolumeNamePrefix, levelIndex, 0)
 	mountPath := GetEmptyDirTieredStoreMountPath(levelIndex)
 
 	quota := emptyDirMediumSource.Quota.DeepCopy()
@@ -207,18 +212,27 @@ func (e *CacheEngine) handleEmptyDir(podSpec *corev1.PodSpec, container *corev1.
 	return nil
 }
 
-// tieredStoreMemoryQuota sums the memory quota of all memory-backed tiered store
-// levels. It must cover exactly the levels that TransformRuntimeTieredStore
-// charges to container memory: process memory and Memory-medium emptyDir.
-func tieredStoreMemoryQuota(tieredStore *datav1alpha1.RuntimeTieredStore) resource.Quantity {
+// chargedTieredStoreMemoryQuota sums the tiered store memory quota already charged
+// to a workload's container memory, recovering it from the tmpfs volumes the
+// creation path wrote. It covers exactly the levels TransformRuntimeTieredStore
+// charges -- process memory and Memory-medium emptyDir -- both of which carry the
+// quota as the volume's size limit.
+//
+// The workload is authoritative rather than the CacheRuntime spec, because
+// tieredStore is not a supported update field. Recomputing the quota from an edited
+// spec would move the container's memory while the tmpfs volumes it must cover keep
+// the size they were created with.
+func chargedTieredStoreMemoryQuota(podSpec *corev1.PodSpec) resource.Quantity {
 	total := *resource.NewQuantity(0, resource.BinarySI)
-	for _, level := range tieredStore.Levels {
-		if level.ProcessMemory != nil {
-			total.Add(level.ProcessMemory.Quota)
+	for _, volume := range podSpec.Volumes {
+		if !strings.HasPrefix(volume.Name, tieredStoreVolumeNamePrefix) {
+			continue
 		}
-		if level.EmptyDir != nil && level.EmptyDir.Medium == corev1.StorageMediumMemory {
-			total.Add(level.EmptyDir.Quota)
+		emptyDir := volume.EmptyDir
+		if emptyDir == nil || emptyDir.Medium != corev1.StorageMediumMemory || emptyDir.SizeLimit == nil {
+			continue
 		}
+		total.Add(*emptyDir.SizeLimit)
 	}
 	return total
 }
