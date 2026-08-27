@@ -26,26 +26,39 @@ fluidapp-controller-7dbdc7696b-86pph      1/1     Running   0          10m
 
 > 注意：本示例需要包含 [#6157](https://github.com/fluid-cloudnative/fluid/pull/6157) 的 Fluid 版本。较早版本在 `topology` 中省略 client 组件时 controller 会发生 panic。
 
-本示例使用的 Mooncake 镜像：
+### 示例镜像
 
-```
-btxu/mooncake:v3
-```
-
-国内网络环境下也可使用阿里云镜像：
-
-```
-crpi-4hkqof7tc9brc6d5.cn-hongkong.personal.cr.aliyuncs.com/mooncake1314/mooncake:v3
-```
-
-该镜像在官方 Mooncake 镜像基础上加入了两个脚本，供 Fluid 调用：
+Fluid 并不发布 Mooncake 镜像。本示例使用的是一个演示镜像，它在 Mooncake 的 Python 发行版之上加入了两个供 Fluid 调用的脚本：
 
 | 路径 | 作用 |
 |---|---|
 | `/custom-entrypoint.sh` | 组件启动入口，按角色（master/worker）启动对应进程 |
 | `/reportSummary.sh` | 采集缓存用量并按 Fluid 要求的 JSON 格式输出 |
 
-这两个脚本并非该镜像独有：你也可以基于官方 Mooncake 镜像自行构建等价镜像，只要它提供同样的两个入口即可，具体约定参见[通用缓存系统接入指南](../../dev/generic_cache_runtime_integration.md)。
+该镜像的构建上下文已随本仓库提供，位于 [`samples/mooncake/docker`](../../../../samples/mooncake/docker)，你可以据此构建等价镜像：
+
+```shell
+$ docker build -t <your-registry>/mooncake:v3 samples/mooncake/docker
+$ docker push <your-registry>/mooncake:v3
+```
+
+注意 `apt-get` 和 `pip` 在构建时拉取的都是当时的最新版本，因此重新构建得到的是功能等价的镜像，并不能字节级复现下面的摘要。
+
+**推荐的做法是自行构建镜像，并替换下文各处清单中的镜像地址。** 为方便试用，也提供了一份预构建镜像，并固定到不可变的镜像摘要，这样即使标签被覆盖，本示例仍然可用：
+
+```
+btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
+```
+
+国内网络环境下也可使用阿里云镜像。它是同一 manifest 的副本，摘要与上面完全相同：
+
+```
+crpi-4hkqof7tc9brc6d5.cn-hongkong.personal.cr.aliyuncs.com/mooncake1314/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
+```
+
+> 注意：以上两个仓库均为本示例作者的个人账号，并非项目管控的基础设施，不提供任何可用性保证。它们仅用于快速试用本示例；正式使用请基于 `samples/mooncake/docker` 自行构建。
+
+这两个脚本并非该镜像独有：你也可以基于任意 Mooncake 发行版自行构建等价镜像，只要它提供同样的两个入口即可，具体约定参见[通用缓存系统接入指南](../../dev/generic_cache_runtime_integration.md)。
 
 ## 运行示例
 
@@ -76,7 +89,7 @@ topology:
         restartPolicy: Always
         containers:
           - name: master
-            image: btxu/mooncake:v3
+            image: btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
             command:
               - /custom-entrypoint.sh
             args:
@@ -109,7 +122,7 @@ topology:
         restartPolicy: Always
         containers:
           - name: worker
-            image: btxu/mooncake:v3
+            image: btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
             command:
               - /custom-entrypoint.sh
             args:
@@ -254,7 +267,7 @@ spec:
   nodeName: fluid-mooncake-worker2
   containers:
     - name: client
-      image: btxu/mooncake:v3
+      image: btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
       imagePullPolicy: IfNotPresent
       command: ["sleep", "infinity"]
       env:
@@ -305,7 +318,7 @@ print("get md5:", hashlib.md5(got).hexdigest())
 print("match:", hashlib.md5(payload).hexdigest() == hashlib.md5(got).hexdigest())
 ```
 
-> 连接地址使用的是 master Pod 的 DNS 名 `mooncake-demo-master-0.svc-mooncake-demo-master`，而不是 Service 名。CacheRuntimeClass 中声明的是 headless Service，其本身不暴露端口，需要通过 Pod 的 DNS 记录访问。
+> 本示例使用 master Pod 的稳定 DNS 名 `mooncake-demo-master-0.svc-mooncake-demo-master` 作为连接地址，从而固定访问某一个副本。这里用 Service 名 `svc-mooncake-demo-master` 同样可行：Fluid 创建的组件 Service 是 headless 的（`clusterIP: None`）且未声明 `ports`，但这只影响 SRV 记录，A 记录仍会直接解析到后端 Pod IP，客户端随后直连容器的 `8080` 和 `50051` 端口。之所以推荐使用 Pod 级 DNS 名，是因为它在 master 扩容后仍然固定指向单个副本。
 
 `setup()` 的输出（截取关键部分）：
 
@@ -352,7 +365,7 @@ spec:
   nodeName: fluid-mooncake-worker
   containers:
     - name: client
-      image: btxu/mooncake:v3
+      image: btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
       imagePullPolicy: IfNotPresent
       command: ["sleep", "infinity"]
       env:
@@ -369,7 +382,13 @@ mooncake-client-1   1/1     Running   0          3m44s   10.244.1.8    fluid-moo
 mooncake-client-2   1/1     Running   0          79s     10.244.2.15   fluid-mooncake-worker    <none>           <none>
 ```
 
-在第二个 Pod 中只做读取和校验（`setup` 参数与上文相同）：
+第二个 Pod 中是一个全新的 Python 进程，需要先进入它的 Python 环境，并重复上文的导入语句和完整的 `MooncakeDistributedStore` 初始化（`setup` 参数与上文完全相同，`POD_IP` 同样取当前 Pod 自身的 IP）：
+
+```shell
+$ kubectl exec -it mooncake-client-2 -- python3
+```
+
+`store` 和 `hashlib` 初始化完成后，再做读取和校验：
 
 ```python
 got = store.get("demo_key")

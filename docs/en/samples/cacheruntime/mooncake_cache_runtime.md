@@ -26,26 +26,39 @@ Typically you should see one pod each for `dataset-controller`, `cacheruntime-co
 
 > Note: this example requires a Fluid build that includes [#6157](https://github.com/fluid-cloudnative/fluid/pull/6157). On earlier versions the controller panics when the client component is omitted from `topology`.
 
-The Mooncake image used in this example:
+### The demo image
 
-```
-btxu/mooncake:v3
-```
-
-An Alibaba Cloud mirror is also available for networks in mainland China:
-
-```
-crpi-4hkqof7tc9brc6d5.cn-hongkong.personal.cr.aliyuncs.com/mooncake1314/mooncake:v3
-```
-
-The image adds two scripts on top of the official Mooncake image for Fluid to invoke:
+Fluid does not publish a Mooncake image. This example uses a demo image built from the Mooncake Python distribution plus two small scripts that Fluid invokes:
 
 | Path | Purpose |
 |---|---|
 | `/custom-entrypoint.sh` | Component entrypoint; starts the right process based on the role (master/worker) |
 | `/reportSummary.sh` | Collects cache usage and emits it as JSON in the format Fluid expects |
 
-Neither script is specific to this image: you can build an equivalent image yourself on top of the official Mooncake image, as long as it provides the same two entry points. See the conventions in the [Generic Cache System Integration Guide](../../dev/generic_cache_runtime_integration.md).
+The build context for that image lives in this repository under [`samples/mooncake/docker`](../../../../samples/mooncake/docker), so you can build an equivalent image yourself:
+
+```shell
+$ docker build -t <your-registry>/mooncake:v3 samples/mooncake/docker
+$ docker push <your-registry>/mooncake:v3
+```
+
+Note that `apt-get` and `pip` resolve to whatever versions are current at build time, so a fresh build produces a functionally equivalent image, not a bit-for-bit reproduction of the digest below.
+
+**Building your own image and substituting it in the manifests below is the recommended path.** For convenience, a prebuilt copy is also available, pinned to an immutable digest so this example keeps working even if the tag is moved:
+
+```
+btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
+```
+
+An Alibaba Cloud mirror is available for networks in mainland China. It is a copy of the same manifest, so it carries the identical digest:
+
+```
+crpi-4hkqof7tc9brc6d5.cn-hongkong.personal.cr.aliyuncs.com/mooncake1314/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
+```
+
+> Note: both registries are personal accounts belonging to the author of this example, not project-controlled infrastructure, and they carry no availability guarantee. Treat them as a convenience for trying the example out, and build from `samples/mooncake/docker` for anything beyond that.
+
+Neither script is specific to this image: you can build an equivalent image on top of any Mooncake distribution, as long as it provides the same two entry points. See the conventions in the [Generic Cache System Integration Guide](../../dev/generic_cache_runtime_integration.md).
 
 ## Running the Example
 
@@ -76,7 +89,7 @@ topology:
         restartPolicy: Always
         containers:
           - name: master
-            image: btxu/mooncake:v3
+            image: btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
             command:
               - /custom-entrypoint.sh
             args:
@@ -109,7 +122,7 @@ topology:
         restartPolicy: Always
         containers:
           - name: worker
-            image: btxu/mooncake:v3
+            image: btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
             command:
               - /custom-entrypoint.sh
             args:
@@ -254,7 +267,7 @@ spec:
   nodeName: fluid-mooncake-worker2
   containers:
     - name: client
-      image: btxu/mooncake:v3
+      image: btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
       imagePullPolicy: IfNotPresent
       command: ["sleep", "infinity"]
       env:
@@ -305,7 +318,7 @@ print("get md5:", hashlib.md5(got).hexdigest())
 print("match:", hashlib.md5(payload).hexdigest() == hashlib.md5(got).hexdigest())
 ```
 
-> The connection address is the master pod's DNS name `mooncake-demo-master-0.svc-mooncake-demo-master`, not the Service name. The CacheRuntimeClass declares a headless Service, which does not expose ports itself, so you must reach the pod through its DNS record.
+> The example connects through the master pod's stable DNS name `mooncake-demo-master-0.svc-mooncake-demo-master`, which pins the client to one specific replica. The Service name `svc-mooncake-demo-master` works just as well here: Fluid creates the component Service as headless (`clusterIP: None`) and declares no `ports` on it, but that only affects SRV records — the A record still resolves straight to the backing pod IPs, and the client connects to container ports `8080` and `50051` directly. The per-pod name is the safer habit because it stays pinned to a single replica if the master is ever scaled out.
 
 Output of `setup()` (key lines only):
 
@@ -352,7 +365,7 @@ spec:
   nodeName: fluid-mooncake-worker
   containers:
     - name: client
-      image: btxu/mooncake:v3
+      image: btxu/mooncake:v3@sha256:067614b70d25b496e3edc3480747d558ee8a364ef47a67f669f5d96ca5098552
       imagePullPolicy: IfNotPresent
       command: ["sleep", "infinity"]
       env:
@@ -369,7 +382,13 @@ mooncake-client-1   1/1     Running   0          3m44s   10.244.1.8    fluid-moo
 mooncake-client-2   1/1     Running   0          79s     10.244.2.15   fluid-mooncake-worker    <none>           <none>
 ```
 
-In the second pod, only read and verify (the `setup` parameters are the same as above):
+The second pod runs a brand-new Python process, so open a session in it and repeat the imports and the full `MooncakeDistributedStore` initialization shown above — the `setup` parameters are identical, and `POD_IP` again resolves to this pod's own IP:
+
+```shell
+$ kubectl exec -it mooncake-client-2 -- python3
+```
+
+Once `store` and `hashlib` are initialized, read and verify:
 
 ```python
 got = store.get("demo_key")
