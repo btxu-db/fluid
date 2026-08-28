@@ -48,6 +48,14 @@ case "$ROLE" in
 
     echo "Starting worker: master=$MASTER_ADDR, segment_size=$SEGMENT_SIZE, host=$WORKER_HOST"
 
+    # The metadata endpoint is plain HTTP and the transfer protocol is TCP
+    # because Mooncake exposes no TLS variant for either: the master's built-in
+    # metadata server (--enable_http_metadata_server) only speaks HTTP, and the
+    # transfer engine only offers "tcp" and "rdma". Both connections stay inside
+    # the cluster, addressed by ClusterIP/headless service DNS, and carry cache
+    # blocks between components of this runtime only. Put the runtime in a
+    # dedicated namespace with a NetworkPolicy, or a service mesh with mTLS, if
+    # that traffic needs to be protected on the wire.
     exec mooncake_client \
       --host="$WORKER_HOST" \
       --port=50052 \
