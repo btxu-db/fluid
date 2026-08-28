@@ -1000,6 +1000,52 @@ var _ = Describe("CacheEngine Sync Tests", Label("pkg.ddc.cache.engine.sync_test
 			})
 		})
 
+		Context("when the tiered store baseline comes from the template", func() {
+			// With the CacheRuntime declaring no resources, the baseline the quota is
+			// charged on top of is the CacheRuntimeClass template value. The quota must
+			// still be added, otherwise the worker is short by the quota it was created
+			// with the moment a sync runs.
+			BeforeEach(func() {
+				runtimeObj.Spec.Worker.TieredStore = datav1alpha1.RuntimeTieredStore{
+					Levels: []datav1alpha1.RuntimeTieredStoreLevel{
+						{ProcessMemory: &datav1alpha1.ProcessMemoryMediumSource{Quota: resource.MustParse("8Gi")}},
+					},
+				}
+				Expect(fakeClient.Update(ctx.Context, runtimeObj)).To(Succeed())
+			})
+
+			It("should charge the quota on top of the template value", func() {
+				Expect(runtimeObj.Spec.Worker.Resources.Limits).To(BeNil())
+				Expect(runtimeObj.Spec.Worker.Resources.Requests).To(BeNil())
+
+				// The workload carries the template value plus the quota, as creation left it.
+				key := types.NamespacedName{Name: workerSts, Namespace: "default"}
+				sts := &workloadv1alpha1.AdvancedStatefulSet{}
+				Expect(fakeClient.Get(ctx.Context, key, sts)).To(Succeed())
+				sts.Spec.Template.Spec.Containers[0].Resources = corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("10Gi")},
+				}
+				chargedQuota := resource.MustParse("8Gi")
+				sts.Spec.Template.Spec.Volumes = []corev1.Volume{{
+					Name: "tiered-store-level-0-memory",
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{
+							Medium:    corev1.StorageMediumMemory,
+							SizeLimit: &chargedQuota,
+						},
+					},
+				}}
+				Expect(fakeClient.Update(ctx.Context, sts)).To(Succeed())
+
+				syncRuntime, err := engine.getRuntime()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(engine.syncRuntimeSpec(ctx, syncRuntime, runtimeClass)).To(Succeed())
+
+				// template 2Gi + quota 8Gi, not the bare template value.
+				Expect(memLimitOf(workerSts)).To(Equal("10Gi"))
+			})
+		})
+
 		Context("when the CacheRuntime declares a memory tiered store", func() {
 			// The creation path derives the worker's memory as
 			// <user baseline> + <tiered store memory quota>. A later sync recomputes
