@@ -931,5 +931,58 @@ var _ = Describe("CacheEngine Sync Tests", Label("pkg.ddc.cache.engine.sync_test
 				Expect(memLimitOf(masterSts)).To(Equal("2Gi"))
 			})
 		})
+
+		Context("when the workload no longer matches the template", func() {
+			// setWorkloadMemLimit edits the workload behind the runtime's back, standing in
+			// for a workload that drifted from the template for any reason.
+			setWorkloadMemLimit := func(stsName, limit string) {
+				sts := &workloadv1alpha1.AdvancedStatefulSet{}
+				key := types.NamespacedName{Name: stsName, Namespace: "default"}
+				Expect(fakeClient.Get(ctx.Context, key, sts)).To(Succeed())
+				sts.Spec.Template.Spec.Containers[0].Resources = corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(limit)},
+				}
+				Expect(fakeClient.Update(ctx.Context, sts)).To(Succeed())
+			}
+
+			It("should restore the template value when the CacheRuntime specifies none", func() {
+				setWorkloadMemLimit(workerSts, "8Gi")
+				Expect(runtimeObj.Spec.Worker.Resources.Limits).To(BeNil())
+				Expect(runtimeObj.Spec.Worker.Resources.Requests).To(BeNil())
+
+				Expect(engine.syncRuntimeSpec(ctx, runtimeObj, runtimeClass)).To(Succeed())
+
+				Expect(memLimitOf(workerSts)).To(Equal("2Gi"))
+			})
+
+			It("should still let the CacheRuntime win over the template", func() {
+				setWorkloadMemLimit(workerSts, "8Gi")
+				runtimeObj.Spec.Worker.Resources = corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")},
+				}
+
+				Expect(engine.syncRuntimeSpec(ctx, runtimeObj, runtimeClass)).To(Succeed())
+
+				Expect(memLimitOf(workerSts)).To(Equal("4Gi"))
+			})
+		})
+
+		Context("when neither the CacheRuntime nor the template specifies resources", func() {
+			It("should leave the workload's resources untouched", func() {
+				runtimeClass.Topology.Worker.Template.Spec.Containers[0].Resources = corev1.ResourceRequirements{}
+
+				sts := &workloadv1alpha1.AdvancedStatefulSet{}
+				key := types.NamespacedName{Name: workerSts, Namespace: "default"}
+				Expect(fakeClient.Get(ctx.Context, key, sts)).To(Succeed())
+				sts.Spec.Template.Spec.Containers[0].Resources = corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")},
+				}
+				Expect(fakeClient.Update(ctx.Context, sts)).To(Succeed())
+
+				Expect(engine.syncRuntimeSpec(ctx, runtimeObj, runtimeClass)).To(Succeed())
+
+				Expect(memLimitOf(workerSts)).To(Equal("8Gi"))
+			})
+		})
 	})
 })
