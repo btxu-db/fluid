@@ -110,7 +110,7 @@ func (e *CacheEngine) handleProcessMemory(podSpec *corev1.PodSpec, container *co
 	container.Resources = withTieredStoreMemoryQuota(container.Resources, totalQuota)
 
 	// add an memory emptyDir for /dev/shm in the container
-	volumeName := fmt.Sprintf("%s%d-memory", tieredStoreVolumeNamePrefix, levelIndex)
+	volumeName := getMemoryTieredStoreVolumeName(levelIndex)
 	mountPath := GetMemoryTieredStoreMountPath(levelIndex)
 	volume := corev1.Volume{
 		Name: volumeName,
@@ -145,7 +145,7 @@ func (e *CacheEngine) handleHostPath(podSpec *corev1.PodSpec, container *corev1.
 
 	// Process each path and corresponding quota
 	for i, hostPath := range hostPathMediumSource.Paths {
-		volumeName := fmt.Sprintf("%s%d-index-%d", tieredStoreVolumeNamePrefix, levelIndex, i)
+		volumeName := getTieredStoreVolumeName(levelIndex, i)
 		mountPath := GetHostPathTieredStoreMountPath(levelIndex, i)
 
 		volume := corev1.Volume{
@@ -179,7 +179,7 @@ func (e *CacheEngine) handleEmptyDir(podSpec *corev1.PodSpec, container *corev1.
 		return fmt.Errorf("emptyDir quota cannot be zero for empty dir medium source at level index %d", levelIndex)
 	}
 
-	volumeName := fmt.Sprintf("%s%d-index-%d", tieredStoreVolumeNamePrefix, levelIndex, 0)
+	volumeName := getTieredStoreVolumeName(levelIndex, 0)
 	mountPath := GetEmptyDirTieredStoreMountPath(levelIndex)
 
 	quota := emptyDirMediumSource.Quota.DeepCopy()

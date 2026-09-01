@@ -17,6 +17,8 @@ limitations under the License.
 package engine
 
 import (
+	"fmt"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -116,7 +118,7 @@ var _ = Describe("CacheEngine TransformRuntimeTieredStore Tests", Label("pkg.ddc
 
 				// Verify volume and volume mount are created for ProcessMemory
 				Expect(podSpec.Volumes).To(HaveLen(1))
-				Expect(podSpec.Volumes[0].Name).To(Equal("tiered-store-level-0-memory"))
+				Expect(podSpec.Volumes[0].Name).To(Equal(getMemoryTieredStoreVolumeName(0)))
 				Expect(podSpec.Volumes[0].EmptyDir).NotTo(BeNil())
 				Expect(podSpec.Volumes[0].EmptyDir.Medium).To(Equal(corev1.StorageMediumMemory))
 
@@ -207,13 +209,13 @@ var _ = Describe("CacheEngine TransformRuntimeTieredStore Tests", Label("pkg.ddc
 
 				// Verify volume is created
 				Expect(podSpec.Volumes).To(HaveLen(1))
-				Expect(podSpec.Volumes[0].Name).To(Equal("tiered-store-level-0-index-0"))
+				Expect(podSpec.Volumes[0].Name).To(Equal(getTieredStoreVolumeName(0, 0)))
 				Expect(podSpec.Volumes[0].HostPath).NotTo(BeNil())
 				Expect(podSpec.Volumes[0].HostPath.Path).To(Equal("/mnt/cache1"))
 
 				// Verify volume mount is created
 				Expect(podSpec.Containers[0].VolumeMounts).To(HaveLen(1))
-				Expect(podSpec.Containers[0].VolumeMounts[0].Name).To(Equal("tiered-store-level-0-index-0"))
+				Expect(podSpec.Containers[0].VolumeMounts[0].Name).To(Equal(getTieredStoreVolumeName(0, 0)))
 				Expect(podSpec.Containers[0].VolumeMounts[0].MountPath).To(ContainSubstring("tiered-store"))
 			})
 
@@ -239,8 +241,8 @@ var _ = Describe("CacheEngine TransformRuntimeTieredStore Tests", Label("pkg.ddc
 				// Verify 3 volumes are created
 				Expect(podSpec.Volumes).To(HaveLen(3))
 				for i := 0; i < 3; i++ {
-					Expect(podSpec.Volumes[i].Name).To(Equal("tiered-store-level-0-index-" + string(rune('0'+i))))
-					Expect(podSpec.Volumes[i].HostPath.Path).To(Equal("/mnt/cache" + string(rune('1'+i))))
+					Expect(podSpec.Volumes[i].Name).To(Equal(getTieredStoreVolumeName(0, i)))
+					Expect(podSpec.Volumes[i].HostPath.Path).To(Equal(fmt.Sprintf("/mnt/cache%d", i+1)))
 				}
 
 				// Verify 3 volume mounts are created
@@ -285,7 +287,7 @@ var _ = Describe("CacheEngine TransformRuntimeTieredStore Tests", Label("pkg.ddc
 
 				// Verify volume is created
 				Expect(podSpec.Volumes).To(HaveLen(1))
-				Expect(podSpec.Volumes[0].Name).To(Equal("tiered-store-level-0-index-0"))
+				Expect(podSpec.Volumes[0].Name).To(Equal(getTieredStoreVolumeName(0, 0)))
 				Expect(podSpec.Volumes[0].EmptyDir).NotTo(BeNil())
 				Expect(podSpec.Volumes[0].EmptyDir.Medium).To(Equal(corev1.StorageMediumDefault))
 
