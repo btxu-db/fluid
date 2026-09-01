@@ -17,12 +17,10 @@
 package engine
 
 import (
-	"context"
 	"os"
 	"reflect"
 	"time"
 
-	workloadv1alpha1 "github.com/fluid-cloudnative/advanced-statefulset/api/workload/v1alpha1"
 	datav1alpha1 "github.com/fluid-cloudnative/fluid/api/v1alpha1"
 	"github.com/fluid-cloudnative/fluid/pkg/common"
 	"github.com/fluid-cloudnative/fluid/pkg/ddc/cache/component"
@@ -31,7 +29,6 @@ import (
 	"github.com/fluid-cloudnative/fluid/pkg/utils/dataset/lifecycle"
 	"github.com/fluid-cloudnative/fluid/pkg/utils/kubeclient"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
@@ -224,15 +221,15 @@ func (e *CacheEngine) syncRuntimeSpec(ctx cruntime.ReconcileRequestContext, runt
 		// memory while the tmpfs volumes kept their original size.
 		workerResources := desiredComponentResources(runtime.Spec.Worker.Resources, runtimeClass.Topology.Worker)
 		if workerResources != nil {
-			quota, err := e.chargedWorkerTieredStoreMemoryQuota(ctx.Context, workerIdentity)
+			podSpec, err := manager.GetPodSpec(ctx.Context, workerIdentity)
 			if err != nil {
-				e.Log.Error(err, "failed to read the tiered store memory quota charged to the worker",
-					"component", workerIdentity.Name)
+				e.Log.Error(err, "failed to read the worker pod spec", "component", workerIdentity.Name)
 				return err
 			}
-			resources := withTieredStoreMemoryQuota(*workerResources, quota)
+			resources := withTieredStoreMemoryQuota(*workerResources, chargedTieredStoreMemoryQuota(podSpec))
 			workerResources = &resources
 		}
+
 		workerSpec := component.ComponentSpec{
 			Version:   runtime.Spec.Worker.RuntimeVersion,
 			Resources: workerResources,
@@ -273,17 +270,6 @@ func desiredComponentResources(runtimeResources corev1.ResourceRequirements, com
 	}
 
 	return templateResources.DeepCopy()
-}
-
-// chargedWorkerTieredStoreMemoryQuota reads back the tiered store memory quota that
-// the creation path charged to the worker workload.
-func (e *CacheEngine) chargedWorkerTieredStoreMemoryQuota(ctx context.Context, identity *common.ComponentIdentity) (resource.Quantity, error) {
-	workers := &workloadv1alpha1.AdvancedStatefulSet{}
-	key := types.NamespacedName{Name: identity.Name, Namespace: identity.Namespace}
-	if err := e.Get(ctx, key, workers); err != nil {
-		return resource.Quantity{}, err
-	}
-	return chargedTieredStoreMemoryQuota(&workers.Spec.Template.Spec), nil
 }
 
 func (e *CacheEngine) syncDatasetCacheStates(ctx cruntime.ReconcileRequestContext, runtime *datav1alpha1.CacheRuntime, runtimeClass *datav1alpha1.CacheRuntimeClass) (err error) {

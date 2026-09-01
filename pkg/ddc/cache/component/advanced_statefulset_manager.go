@@ -63,6 +63,16 @@ func (s *AdvancedStatefulSetManager) GetNodeAffinity(identity *common.ComponentI
 	return affinity, nil
 }
 
+func (s *AdvancedStatefulSetManager) GetPodSpec(ctx context.Context, identity *common.ComponentIdentity) (*corev1.PodSpec, error) {
+	asts := &workloadv1alpha1.AdvancedStatefulSet{}
+	err := s.client.Get(ctx, types.NamespacedName{Name: identity.Name, Namespace: identity.Namespace}, asts)
+	if err != nil {
+		return nil, err
+	}
+
+	return asts.Spec.Template.Spec.DeepCopy(), nil
+}
+
 func (s *AdvancedStatefulSetManager) reconcileStatefulSet(ctx context.Context, component *common.CacheRuntimeComponentValue) error {
 	logger := log.FromContext(ctx)
 	logger.Info("start to reconciling advanced statefulset workload")
